@@ -186,6 +186,7 @@ impl<'a> PropsResolver<'a> {
 
                 self.collect_metadata(&options, &path);
 
+                let parent_was_resolved = parent_was_resolved || options.always;
                 let value = match value {
                     Resolved::Nested(nested) => {
                         Value::Object(self.resolve_props(nested, path, parent_was_resolved).await?)

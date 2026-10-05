@@ -97,6 +97,9 @@ impl Inertia {
 
     /// Share a prop with this request's page.
     pub fn share(&self, key: impl Into<String>, value: impl IntoProp) -> &Self {
+        let key = key.into();
+        // Prop conversion may serialize application code that shares more data.
+        let value = value.into_prop();
         self.pending().shared.insert(key, value);
         self
     }
@@ -104,9 +107,10 @@ impl Inertia {
     /// Flash data to the next page, in its `flash` field. Unlike props, flash
     /// data isn't kept in the browser history, which suits notifications.
     pub fn flash(&self, key: impl Into<String>, value: impl Serialize) -> &Self {
+        let key = key.into();
         match serde_json::to_value(value) {
             Ok(value) => {
-                self.pending().flash.insert(key.into(), value);
+                self.pending().flash.insert(key, value);
             }
             Err(error) => tracing::error!(%error, "failed to serialize Inertia flash data"),
         }
@@ -120,7 +124,9 @@ impl Inertia {
 
     /// Share validation errors with the next page, in the given error bag.
     pub fn with_errors_in(&self, bag: impl Into<String>, errors: impl Into<ValidationErrors>) -> &Self {
-        self.pending().errors.add(bag, errors.into());
+        let bag = bag.into();
+        let errors = errors.into();
+        self.pending().errors.add(bag, errors);
         self
     }
 

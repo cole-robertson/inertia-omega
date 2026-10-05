@@ -125,6 +125,53 @@ async fn partial_reloads_only_include_the_requested_props() {
 }
 
 #[tokio::test]
+async fn always_props_keep_their_children_on_partial_reloads() {
+    let inertia = reload(&[("x-inertia-partial-data", "users")]);
+    inertia.with_errors(ValidationErrors::new().with("name", "A name is required."));
+    let page = resolve(inertia.render(
+        "Users",
+        props! {
+            "users" => ["Taylor"],
+            "profile" => inertia::always(json!({ "user": { "id": 1 } })),
+            "settings" => inertia::always(props! { "theme" => "dark" }),
+        },
+    ))
+    .await;
+
+    assert_eq!(page.props["errors"], json!({ "name": "A name is required." }));
+    assert_eq!(page.props["profile"], json!({ "user": { "id": 1 } }));
+    assert_eq!(page.props["settings"], json!({ "theme": "dark" }));
+}
+
+#[test]
+fn serializing_a_shared_prop_can_share_another_prop() {
+    struct User(Inertia);
+
+    impl Serialize for User {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.share("signed_in", true);
+            serializer.serialize_str("Taylor")
+        }
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let inertia = visit(&[]);
+        inertia.share("user", User(inertia.clone()));
+        sender.send(inertia).unwrap();
+    });
+    let inertia = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("sharing must not hold the pending-data lock while serializing");
+    thread.join().unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    let page = runtime.block_on(resolve(inertia.render("Users", props! {})));
+    assert_eq!(page.props["user"], json!("Taylor"));
+    assert_eq!(page.props["signed_in"], json!(true));
+}
+
+#[tokio::test]
 async fn partial_reloads_exclude_the_excepted_props() {
     let page =
         resolve(reload(&[("x-inertia-partial-except", "auth,literal.x,errors")]).render("Users", users_props())).await;
@@ -264,6 +311,15 @@ async fn scroll_props_carry_pagination_metadata() {
     let page = resolve(prepend.render("Users", props())).await;
     assert_eq!(page.metadata.prepend_props, ["later.data"]);
     assert_eq!(page.metadata.scroll_props["later"].metadata.next_page, None);
+}
+
+#[test]
+fn paginator_normalizes_a_zero_page() {
+    let paginator = Paginator::new(vec!["Taylor"], 1, 15, 0);
+
+    assert_eq!(paginator.current_page, 1);
+    assert_eq!(paginator.from, Some(1));
+    assert_eq!(paginator.to, Some(1));
 }
 
 #[tokio::test]

@@ -80,8 +80,10 @@ pub struct Paginator<T> {
 
 impl<T> Paginator<T> {
     /// Create a paginator for a page of items.
+    /// Page numbers and page sizes have a minimum of one.
     pub fn new(data: Vec<T>, total: u64, per_page: u64, current_page: u64) -> Self {
         let per_page = per_page.max(1);
+        let current_page = current_page.max(1);
         let last_page = total.div_ceil(per_page).max(1);
         let count = data.len() as u64;
         let from = (count > 0).then(|| (current_page - 1) * per_page + 1);
