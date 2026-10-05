@@ -1,0 +1,296 @@
+//! A page render, resolved into an HTTP response once the handler returns.
+
+use http::{HeaderValue, StatusCode, header};
+use serde::Serialize;
+use serde_json::{Map, Value};
+
+use crate::HttpResponse;
+use crate::errors::ErrorBags;
+use crate::header as inertia_header;
+use crate::inertia::Inertia;
+use crate::json::{encode_big_integers, html_safe_json};
+use crate::page::Page;
+use crate::props::{self, IntoProp, PropError, Props, PropsResolver};
+use crate::session::{SharedSession, key};
+use crate::ssr::Rendered;
+use crate::view::View;
+
+/// A page render.
+///
+/// Return it from a handler: the adapter resolves the props and builds the
+/// HTML document or JSON page once the handler is done, much like a Laravel
+/// `Responsable`. Use [`Response::into_http`] to do so directly.
+///
+/// ```no_run
+/// # use inertia::{Inertia, props};
+/// # fn handler(inertia: Inertia) -> inertia::Response {
+/// inertia
+///     .render("Dashboard", props! { "stats" => [1, 2, 3] })
+///     .with("title", "Dashboard")
+///     .clear_history()
+/// # }
+/// ```
+#[must_use = "a page render does nothing unless it is returned or turned into an HTTP response"]
+pub struct Response {
+    inertia: Inertia,
+    component: String,
+    props: Result<Props, PropError>,
+    view_data: Map<String, Value>,
+    flash: Map<String, Value>,
+    encrypt_history: Option<bool>,
+    clear_history: bool,
+    preserve_big_integers: Option<bool>,
+    ssr: bool,
+}
+
+impl Response {
+    pub(crate) fn new(inertia: Inertia, component: String, props: Result<Props, PropError>) -> Self {
+        Self {
+            inertia,
+            component,
+            props,
+            view_data: Map::new(),
+            flash: Map::new(),
+            encrypt_history: None,
+            clear_history: false,
+            preserve_big_integers: None,
+            ssr: true,
+        }
+    }
+
+    /// Add a prop.
+    pub fn with(mut self, key: impl Into<String>, value: impl IntoProp) -> Self {
+        if let Ok(props) = &mut self.props {
+            props.insert(key, value);
+        }
+        self
+    }
+
+    /// Add data for the root view only, which the page doesn't receive.
+    pub fn with_view_data(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
+        self.view_data
+            .insert(key.into(), serde_json::to_value(value).unwrap_or_default());
+        self
+    }
+
+    /// Flash data to this page.
+    pub fn flash(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
+        self.flash
+            .insert(key.into(), serde_json::to_value(value).unwrap_or_default());
+        self
+    }
+
+    /// Encrypt this page in the browser history.
+    pub fn encrypt_history(mut self, encrypt: bool) -> Self {
+        self.encrypt_history = Some(encrypt);
+        self
+    }
+
+    /// Clear the browser history when this page is visited.
+    pub fn clear_history(mut self) -> Self {
+        self.clear_history = true;
+        self
+    }
+
+    /// Send integers outside JavaScript's safe range as `BigInt`s.
+    pub fn preserve_big_integers(mut self, preserve: bool) -> Self {
+        self.preserve_big_integers = Some(preserve);
+        self
+    }
+
+    /// Render this page on the client, even when SSR is enabled.
+    pub fn without_ssr(mut self) -> Self {
+        self.ssr = false;
+        self
+    }
+
+    /// Resolve the props and build the HTTP response: JSON for Inertia
+    /// visits, the root view's HTML document otherwise.
+    pub async fn into_http(mut self) -> HttpResponse {
+        let inertia = self.inertia.clone();
+        let view_data = std::mem::take(&mut self.view_data);
+        let ssr = self.ssr;
+
+        match self.into_page().await {
+            Ok(page) if inertia.request().is_inertia() => json(&page),
+            Ok(page) => document(&inertia, &page, &view_data, ssr).await,
+            Err(error) => {
+                tracing::error!(%error, "failed to resolve Inertia props");
+                text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+            }
+        }
+    }
+
+    /// Resolve the props into the page object.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the props didn't serialize to an object, or a prop that
+    /// isn't [rescued](crate::Prop::rescue) failed to resolve.
+    pub async fn into_page(self) -> Result<Page, PropError> {
+        let Self {
+            inertia,
+            component,
+            props,
+            flash,
+            encrypt_history,
+            clear_history,
+            preserve_big_integers,
+            ..
+        } = self;
+        let props = props?;
+        let config = inertia.config();
+        let request = inertia.request();
+        let pending = inertia.take_pending();
+        let stored = Stored::pull(inertia.session()).await;
+
+        let mut errors = stored.errors;
+        errors.merge(pending.errors);
+
+        let mut shared = Props::new();
+        shared.insert(
+            "errors",
+            props::always(errors.to_prop(request.error_bag(), config.with_all_errors)),
+        );
+        for share in &config.shares {
+            shared.extend(share(request));
+        }
+        shared.extend(pending.shared);
+
+        let (props, metadata) = PropsResolver::new(request, &component)
+            .resolve(shared, props, config.expose_shared_prop_keys)
+            .await?;
+
+        let preserve_big_integers = preserve_big_integers.unwrap_or(config.preserve_big_integers);
+        let encode = |map: Map<String, Value>| {
+            if !preserve_big_integers {
+                return map;
+            }
+
+            match encode_big_integers(Value::Object(map)) {
+                Value::Object(map) => map,
+                _ => unreachable!("an object stays an object"),
+            }
+        };
+
+        let mut all_flash = stored.flash;
+        all_flash.extend(pending.flash);
+        all_flash.extend(flash);
+
+        Ok(Page {
+            component,
+            props: encode(props),
+            url: config
+                .url_resolver
+                .as_ref()
+                .map_or_else(|| request.url().to_owned(), |resolve| resolve(request)),
+            version: config.current_version(),
+            metadata,
+            preserve_big_integers,
+            clear_history: clear_history || pending.clear_history || stored.clear_history,
+            encrypt_history: encrypt_history
+                .or(pending.encrypt_history)
+                .unwrap_or(config.encrypt_history),
+            flash: encode(all_flash),
+            preserve_fragment: pending.preserve_fragment || stored.preserve_fragment,
+        })
+    }
+}
+
+/// What previous requests left in the session for this page.
+#[derive(Default)]
+struct Stored {
+    flash: Map<String, Value>,
+    errors: ErrorBags,
+    clear_history: bool,
+    preserve_fragment: bool,
+}
+
+impl Stored {
+    /// Pull the stored state, so it's delivered to this page only.
+    async fn pull(session: Option<&SharedSession>) -> Self {
+        let Some(session) = session else {
+            return Self::default();
+        };
+
+        Self {
+            flash: pull(session, key::FLASH).await,
+            errors: pull(session, key::ERRORS).await,
+            clear_history: pull(session, key::CLEAR_HISTORY).await,
+            preserve_fragment: pull(session, key::PRESERVE_FRAGMENT).await,
+        }
+    }
+}
+
+async fn pull<T: serde::de::DeserializeOwned + Default>(session: &SharedSession, key: &str) -> T {
+    session
+        .pull(key)
+        .await
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
+/// The page as JSON, for Inertia visits.
+fn json(page: &Page) -> HttpResponse {
+    match serde_json::to_string(page) {
+        Ok(json) => {
+            let mut response = HttpResponse::new(json);
+            let headers = response.headers_mut();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            headers.insert(inertia_header::INERTIA, HeaderValue::from_static("true"));
+            headers.insert(header::VARY, HeaderValue::from_static("X-Inertia"));
+            response
+        }
+        Err(error) => {
+            tracing::error!(%error, "failed to serialize the Inertia page");
+            text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+        }
+    }
+}
+
+/// The root view's HTML document, for first visits.
+async fn document(inertia: &Inertia, page: &Page, data: &Map<String, Value>, ssr: bool) -> HttpResponse {
+    let config = inertia.config();
+
+    let rendered = match (&config.gateway, ssr) {
+        (Some(gateway), true) => gateway.dispatch(page, inertia.request()).await,
+        _ => None,
+    };
+
+    let ssr = rendered.is_some();
+    let Rendered { head, body } = rendered.unwrap_or_else(|| Rendered {
+        head: String::new(),
+        body: format!(
+            r#"<script data-page="{id}" type="application/json">{json}</script><div id="{id}"></div>"#,
+            id = config.root_id,
+            json = html_safe_json(page),
+        ),
+    });
+
+    let html = config.render_root_view(&View {
+        page,
+        head: &head,
+        body: &body,
+        data,
+        ssr,
+    });
+
+    let mut response = HttpResponse::new(html);
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(header::VARY, HeaderValue::from_static("X-Inertia"));
+    response
+}
+
+fn text(status: StatusCode, body: &str) -> HttpResponse {
+    let mut response = HttpResponse::new(body.to_owned());
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response
+}

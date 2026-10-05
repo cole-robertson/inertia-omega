@@ -1,0 +1,56 @@
+[package]
+name = "inertia-omega"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "The Inertia.js server-side protocol for Rust, with a framework-agnostic core and an Axum adapter"
+license = "MIT"
+repository = "https://github.com/inertiajs/inertia-omega"
+keywords = ["inertia", "axum", "react", "vue", "svelte"]
+categories = ["web-programming", "web-programming::http-server"]
+
+# Code writes `use inertia::…`, whatever the package is called.
+[lib]
+name = "inertia"
+
+[features]
+default = ["axum", "tower-sessions", "ssr"]
+## The Axum adapter: an extractor, a tower layer and `IntoResponse` impls.
+axum = ["dep:axum", "dep:http-body", "dep:tower-layer", "dep:tower-service"]
+## A `Session` implementation for `tower_sessions::Session`.
+tower-sessions = ["dep:tower-sessions"]
+## Server-side rendering through an Inertia SSR server over HTTP.
+ssr = ["dep:reqwest"]
+## `From<validator::ValidationErrors>` for `ValidationErrors`.
+validator = ["dep:validator"]
+## `From<garde::Report>` for `ValidationErrors`.
+garde = ["dep:garde"]
+
+[dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+http = "1"
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+
+axum = { version = "0.8", default-features = false, features = ["original-uri"], optional = true }
+garde = { version = "0.23", default-features = false, optional = true }
+http-body = { version = "1", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"], optional = true }
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+tower-sessions = { version = "0.15", default-features = false, optional = true }
+validator = { version = "0.21", optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["macros"] }
+garde = { version = "0.23", features = ["derive", "email"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-sessions = { version = "0.15", features = ["memory-store"] }
+validator = { version = "0.21", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
