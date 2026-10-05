@@ -13,7 +13,8 @@ struct PendingRender(Arc<Mutex<Option<crate::Response>>>);
 
 /// Returning a render from a handler hands it to the [`InertiaLayer`](super::InertiaLayer),
 /// which resolves its props once the handler is done, much like a Laravel
-/// `Responsable`. Status codes and headers set around the render are kept:
+/// `Responsable`. Status codes, headers and extensions set around the render
+/// are kept:
 ///
 /// ```no_run
 /// # use axum::{http::StatusCode, response::IntoResponse};
@@ -32,15 +33,21 @@ impl IntoResponse for crate::Response {
     }
 }
 
+/// Whether the response is a page render, waiting for the [`InertiaLayer`](super::InertiaLayer)
+/// to resolve its props.
+pub fn is_render(response: &Response) -> bool {
+    response.extensions().get::<PendingRender>().is_some()
+}
+
 /// Render the page a handler returned, if any.
-pub(super) async fn render(mut response: Response) -> Response {
+pub(super) async fn render(mut response: Response) -> Result<Response, crate::PropError> {
     let pending = response.extensions_mut().remove::<PendingRender>();
     let Some(page) = pending.and_then(|pending| pending.0.lock().unwrap_or_else(PoisonError::into_inner).take()) else {
-        return response;
+        return Ok(response);
     };
 
     let (parts, _) = response.into_parts();
-    let mut rendered = page.into_http().await.map(Body::from);
+    let mut rendered = page.try_into_http().await?.map(Body::from);
 
     if rendered.status() == StatusCode::OK {
         *rendered.status_mut() = parts.status;
@@ -51,6 +58,7 @@ pub(super) async fn render(mut response: Response) -> Response {
             rendered.headers_mut().append(name, value.clone());
         }
     }
+    rendered.extensions_mut().extend(parts.extensions);
 
-    rendered
+    Ok(rendered)
 }

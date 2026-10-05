@@ -105,20 +105,34 @@ impl Response {
     }
 
     /// Resolve the props and build the HTTP response: JSON for Inertia
-    /// visits, the root view's HTML document otherwise.
-    pub async fn into_http(mut self) -> HttpResponse {
+    /// visits, the root view's HTML document otherwise. A prop that fails
+    /// to resolve is logged, and the response is a `500`.
+    pub async fn into_http(self) -> HttpResponse {
+        self.try_into_http().await.unwrap_or_else(|error| {
+            tracing::error!(%error, "failed to resolve Inertia props");
+            text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+        })
+    }
+
+    /// Resolve the props and build the HTTP response, as [`into_http`](Self::into_http)
+    /// does, but return a prop's failure, for a framework to render as it
+    /// renders any error.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the props didn't serialize to an object, or a prop that
+    /// isn't [rescued](crate::Prop::rescue) failed to resolve.
+    pub async fn try_into_http(mut self) -> Result<HttpResponse, PropError> {
         let inertia = self.inertia.clone();
         let view_data = std::mem::take(&mut self.view_data);
         let ssr = self.ssr;
+        let page = self.into_page().await?;
 
-        match self.into_page().await {
-            Ok(page) if inertia.request().is_inertia() => json(&page),
-            Ok(page) => document(&inertia, &page, &view_data, ssr).await,
-            Err(error) => {
-                tracing::error!(%error, "failed to resolve Inertia props");
-                text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-            }
-        }
+        Ok(if inertia.request().is_inertia() {
+            json(&page)
+        } else {
+            document(&inertia, &page, &view_data, ssr).await
+        })
     }
 
     /// Resolve the props into the page object.

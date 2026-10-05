@@ -5,8 +5,9 @@ use std::task::{Context, Poll};
 
 use ::axum::body::Body;
 use ::axum::extract::OriginalUri;
-use ::axum::response::Response;
+use ::axum::response::{IntoResponse, Response};
 use futures_util::future::BoxFuture;
+use http::StatusCode;
 use http::request::Parts;
 use http_body::Body as _;
 use tower_layer::Layer;
@@ -15,6 +16,7 @@ use tower_service::Service;
 use super::response::render;
 use crate::config::Config;
 use crate::inertia::Inertia;
+use crate::props::PropError;
 use crate::protocol;
 use crate::request::Request;
 use crate::session::{Session, SharedSession};
@@ -58,7 +60,30 @@ impl InertiaLayer {
     ///
     /// The layer calls this for each request; it's public so Inertia can
     /// be composed into other middleware systems, such as a framework's own.
+    /// A prop that fails to resolve is logged, and the response is a `500`.
     pub async fn handle<F, Fut, E>(&self, request: http::Request<Body>, next: F) -> Result<Response, E>
+    where
+        F: FnOnce(http::Request<Body>) -> Fut,
+        Fut: Future<Output = Result<Response, E>>,
+    {
+        self.handle_with(request, next, |error| {
+            tracing::error!(%error, "failed to resolve Inertia props");
+            server_error()
+        })
+        .await
+    }
+
+    /// Run Inertia around `next`, as [`handle`](Self::handle) does, but
+    /// respond to a prop's failure with `failed`, for a framework to render
+    /// it as it renders any error. Its response may be a page render, such
+    /// as an error page; should that fail too, it's logged, and the
+    /// response is a `500`.
+    pub async fn handle_with<F, Fut, E>(
+        &self,
+        request: http::Request<Body>,
+        next: F,
+        failed: impl FnOnce(PropError) -> Response,
+    ) -> Result<Response, E>
     where
         F: FnOnce(http::Request<Body>) -> Fut,
         Fut: Future<Output = Result<Response, E>>,
@@ -81,7 +106,13 @@ impl InertiaLayer {
         parts.extensions.insert(inertia.clone());
 
         let response = next(http::Request::from_parts(parts, body)).await?;
-        let response = render(response).await;
+        let response = match render(response).await {
+            Ok(response) => response,
+            Err(error) => render(failed(error)).await.unwrap_or_else(|error| {
+                tracing::error!(%error, "failed to resolve the Inertia props of a failure's response");
+                server_error()
+            }),
+        };
 
         inertia.commit().await;
 
@@ -93,6 +124,10 @@ impl InertiaLayer {
             None => Response::from_parts(parts, body),
         })
     }
+}
+
+fn server_error() -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
 }
 
 fn default_session(parts: &Parts) -> Option<SharedSession> {

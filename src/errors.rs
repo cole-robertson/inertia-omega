@@ -142,32 +142,74 @@ impl ErrorBags {
 
 #[cfg(feature = "validator")]
 impl From<validator::ValidationErrors> for ValidationErrors {
+    /// Nested structs' and lists' errors are keyed by their dotted path, as
+    /// Laravel keys them (`items.1.name`). Fields are in alphabetical order,
+    /// since `validator` keeps them in a `HashMap`.
     fn from(errors: validator::ValidationErrors) -> Self {
-        errors
-            .field_errors()
-            .into_iter()
-            .flat_map(|(field, errors)| {
-                errors.iter().map(move |error| {
-                    let message = error
-                        .message
-                        .as_ref()
-                        .map_or_else(|| error.code.to_string(), ToString::to_string);
+        fn collect(prefix: &str, errors: &validator::ValidationErrors, into: &mut ValidationErrors) {
+            use validator::ValidationErrorsKind;
 
-                    (field.to_string(), message)
-                })
-            })
+            let mut fields: Vec<_> = errors.errors().iter().collect();
+            fields.sort_by_key(|(field, _)| *field);
+
+            for (field, kind) in fields {
+                let path = if prefix.is_empty() {
+                    field.to_string()
+                } else {
+                    format!("{prefix}.{field}")
+                };
+
+                match kind {
+                    ValidationErrorsKind::Field(errors) => {
+                        for error in errors {
+                            let message = error
+                                .message
+                                .as_ref()
+                                .map_or_else(|| invalid(&path), ToString::to_string);
+                            into.add(path.clone(), message);
+                        }
+                    }
+                    ValidationErrorsKind::Struct(errors) => collect(&path, errors, into),
+                    ValidationErrorsKind::List(items) => {
+                        for (index, errors) in items {
+                            collect(&format!("{path}.{index}"), errors, into);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut into = Self::new();
+        collect("", &errors, &mut into);
+        into
+    }
+}
+
+/// The message for a `validator` rule declared without one: its code alone
+/// (`length`) means nothing to a user.
+#[cfg(feature = "validator")]
+fn invalid(path: &str) -> String {
+    format!("The {} field is invalid.", path.replace('_', " "))
+}
+
+#[cfg(feature = "garde")]
+impl From<garde::Report> for ValidationErrors {
+    /// Paths are dotted, as Laravel keys them: garde's `items[1].name` is
+    /// `items.1.name`.
+    fn from(report: garde::Report) -> Self {
+        report
+            .iter()
+            .map(|(path, error)| (dotted(&path.to_string()), error.message().to_string()))
             .collect()
     }
 }
 
 #[cfg(feature = "garde")]
-impl From<garde::Report> for ValidationErrors {
-    fn from(report: garde::Report) -> Self {
-        report
-            .iter()
-            .map(|(path, error)| (path.to_string(), error.message().to_string()))
-            .collect()
-    }
+fn dotted(path: &str) -> String {
+    path.replace('[', ".")
+        .replace(']', "")
+        .trim_start_matches('.')
+        .to_owned()
 }
 
 #[cfg(test)]

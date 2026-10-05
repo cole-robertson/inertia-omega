@@ -34,3 +34,4 @@ mod response;
 
 pub use self::extract::MissingInertiaLayer;
 pub use self::layer::{InertiaLayer, InertiaService};
+pub use self::response::is_render;

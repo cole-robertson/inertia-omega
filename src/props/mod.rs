@@ -29,6 +29,11 @@ impl PropError {
     pub fn new(error: impl Into<BoxError>) -> Self {
         Self(error.into())
     }
+
+    /// The error the prop failed with.
+    pub fn into_inner(self) -> BoxError {
+        self.0
+    }
 }
 
 impl fmt::Display for PropError {

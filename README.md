@@ -342,6 +342,8 @@ if let Some(response) = inertia::protocol::before(&request, &config) {
 let inertia = Inertia::with_session(config.clone(), request, session);
 
 // 4. Run the handler. If it returned an inertia::Response, resolve it.
+//    `try_into_http` returns a prop's failure instead of a plain `500`,
+//    for the framework to render as it renders any error.
 let response = page.into_http().await;
 
 // 5. Write queued flash data and errors to the session.

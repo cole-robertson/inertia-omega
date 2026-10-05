@@ -264,3 +264,48 @@ async fn the_extractor_requires_the_layer() {
 
     assert_eq!(send(&app, get_("/")).await.status, StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+fn failing_page(inertia: Inertia) -> inertia::Response {
+    inertia.render(
+        "Home",
+        props! {
+            "stats" => inertia::try_lazy(|| async { Err::<u32, _>(std::io::Error::other("The stats are down")) }),
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_failing_prop_is_a_server_error() {
+    let app = Router::new()
+        .route("/", get(|inertia: Inertia| async move { failing_page(inertia) }))
+        .layer(InertiaLayer::new(config()));
+
+    assert_eq!(send(&app, get_("/")).await.status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn handle_with_responds_to_a_failing_prop() {
+    let response = InertiaLayer::new(config())
+        .handle_with(
+            get_("/"),
+            |request| async move {
+                let inertia = request.extensions().get::<Inertia>().cloned().unwrap();
+                let page = failing_page(inertia.clone()).into_response();
+                assert!(inertia::axum::is_render(&page));
+
+                Ok::<_, std::convert::Infallible>(page)
+            },
+            |error| {
+                let source = error.into_inner();
+                assert!(source.downcast_ref::<std::io::Error>().is_some());
+
+                (StatusCode::SERVICE_UNAVAILABLE, source.to_string()).into_response()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body, "The stats are down");
+}

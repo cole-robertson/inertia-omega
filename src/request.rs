@@ -129,9 +129,12 @@ impl Request {
         header_str(&self.headers, &inertia::ERROR_BAG).filter(|bag| !bag.is_empty())
     }
 
-    /// Whether the client is prefetching the page.
+    /// Whether the client is prefetching the page: `Purpose`, `Sec-Purpose`
+    /// or `X-Moz` is `prefetch`, in any case, as Laravel checks.
     pub fn is_prefetch(&self) -> bool {
-        header_str(&self.headers, &inertia::PURPOSE) == Some("prefetch")
+        [inertia::PURPOSE, SEC_PURPOSE, X_MOZ]
+            .iter()
+            .any(|name| header_str(&self.headers, name).is_some_and(|value| value.eq_ignore_ascii_case("prefetch")))
     }
 
     /// The `Referer` header.
@@ -139,6 +142,10 @@ impl Request {
         header_str(&self.headers, &header::REFERER)
     }
 }
+
+// Browsers' own prefetch headers, which aren't part of the Inertia protocol.
+const SEC_PURPOSE: HeaderName = HeaderName::from_static("sec-purpose");
+const X_MOZ: HeaderName = HeaderName::from_static("x-moz");
 
 fn header_str<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
@@ -196,5 +203,15 @@ mod tests {
         assert!(!request.is_inertia());
         assert_eq!(request.partial_component(), None);
         assert_eq!(request.full_url(), "http://localhost/users?page=2");
+    }
+
+    #[test]
+    fn prefetch_headers_are_read_in_any_case() {
+        assert!(request(&[("purpose", "prefetch")]).is_prefetch());
+        assert!(request(&[("purpose", "Prefetch")]).is_prefetch());
+        assert!(request(&[("sec-purpose", "prefetch")]).is_prefetch());
+        assert!(request(&[("x-moz", "PREFETCH")]).is_prefetch());
+        assert!(!request(&[("purpose", "prerender")]).is_prefetch());
+        assert!(!request(&[]).is_prefetch());
     }
 }

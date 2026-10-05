@@ -376,19 +376,48 @@ fn converts_validator_errors() {
         #[validate(length(min = 3, message = "The name must be at least 3 characters."))]
         name: String,
         #[validate(email)]
-        email: String,
+        email_address: String,
+        #[validate(nested)]
+        address: Address,
+        #[validate(nested)]
+        phones: Vec<Phone>,
+    }
+
+    #[derive(Validate)]
+    struct Address {
+        #[validate(length(min = 1, message = "The city field is required."))]
+        city: String,
+    }
+
+    #[derive(Validate)]
+    struct Phone {
+        #[validate(length(min = 7, message = "The number is too short."))]
+        number: String,
     }
 
     let errors: ValidationErrors = NewUser {
         name: "Al".into(),
-        email: "nope".into(),
+        email_address: "nope".into(),
+        address: Address { city: String::new() },
+        phones: vec![
+            Phone {
+                number: "5551234".into(),
+            },
+            Phone { number: "1".into() },
+        ],
     }
     .validate()
     .unwrap_err()
     .into();
 
     assert_eq!(errors.first("name"), Some("The name must be at least 3 characters."));
-    assert_eq!(errors.first("email"), Some("email"));
+    assert_eq!(
+        errors.first("email_address"),
+        Some("The email address field is invalid.")
+    );
+    assert_eq!(errors.first("address.city"), Some("The city field is required."));
+    assert_eq!(errors.first("phones.1.number"), Some("The number is too short."));
+    assert!(!errors.has("phones.0.number"));
 }
 
 #[cfg(feature = "garde")]
@@ -400,9 +429,30 @@ fn converts_garde_reports() {
     struct NewUser {
         #[garde(length(min = 3))]
         name: String,
+        #[garde(dive)]
+        phones: Vec<Phone>,
     }
 
-    let errors: ValidationErrors = NewUser { name: "Al".into() }.validate().unwrap_err().into();
+    #[derive(Validate)]
+    struct Phone {
+        #[garde(length(min = 7))]
+        number: String,
+    }
+
+    let errors: ValidationErrors = NewUser {
+        name: "Al".into(),
+        phones: vec![
+            Phone {
+                number: "5551234".into(),
+            },
+            Phone { number: "1".into() },
+        ],
+    }
+    .validate()
+    .unwrap_err()
+    .into();
 
     assert!(errors.has("name"));
+    assert!(errors.has("phones.1.number"));
+    assert!(!errors.has("phones[1].number"));
 }
