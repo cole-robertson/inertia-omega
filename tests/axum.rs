@@ -1,12 +1,16 @@
 //! The Axum adapter.
 
+#![cfg(feature = "axum")]
+
 use axum::body::Body;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use http::{HeaderMap, StatusCode, header};
+#[cfg(feature = "tower-sessions")]
+use http::header;
+use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use inertia::axum::InertiaLayer;
 use inertia::testing::AssertablePage;
@@ -73,6 +77,7 @@ impl TestResponse {
         AssertablePage::from_body(&self.body)
     }
 
+    #[cfg(feature = "tower-sessions")]
     fn session_cookie(&self) -> String {
         self.header("set-cookie")
             .and_then(|cookie| cookie.split(';').next())
@@ -141,6 +146,33 @@ async fn status_codes_set_around_a_render_are_kept() {
 }
 
 #[tokio::test]
+async fn prop_callbacks_can_flash_to_their_http_response() {
+    let app = Router::new()
+        .route(
+            "/",
+            get(|inertia: Inertia| async move {
+                let callback = inertia.clone();
+                inertia.render(
+                    "Home",
+                    props! {
+                        "name" => inertia::lazy(move || async move {
+                            callback.flash("message", "Profile refreshed");
+                            "Taylor"
+                        }),
+                    },
+                )
+            }),
+        )
+        .layer(InertiaLayer::new(config()));
+
+    send(&app, visit("GET", "/").body(Body::empty()).unwrap())
+        .await
+        .page()
+        .equals("name", "Taylor")
+        .flash("message", "Profile refreshed");
+}
+
+#[tokio::test]
 async fn outdated_clients_reload_the_page() {
     let request = http::Request::get("/?a=1")
         .header("host", "localhost")
@@ -194,6 +226,7 @@ async fn other_responses_pass_through() {
     assert_eq!(response.header("vary"), Some("X-Inertia"));
 }
 
+#[cfg(feature = "tower-sessions")]
 #[tokio::test]
 async fn flash_data_and_errors_survive_a_redirect() {
     let app = app(config());
@@ -234,6 +267,7 @@ async fn flash_data_and_errors_survive_a_redirect() {
     assert!(response.page().page().flash.is_empty());
 }
 
+#[cfg(feature = "tower-sessions")]
 #[tokio::test]
 async fn errors_are_scoped_to_the_requested_error_bag() {
     let app = app(config().with_all_errors(true));

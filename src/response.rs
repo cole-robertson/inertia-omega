@@ -189,6 +189,7 @@ impl Response {
 
         let mut all_flash = stored.flash;
         all_flash.extend(pending.flash);
+        all_flash.extend(inertia.take_flash());
         all_flash.extend(flash);
 
         Ok(Page {

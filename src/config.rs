@@ -114,8 +114,7 @@ impl Config {
         self
     }
 
-    /// Render first visits on the server through the given gateway, such as
-    /// an [`HttpGateway`](crate::ssr::HttpGateway).
+    /// Render first visits on the server through the given [`Gateway`].
     pub fn ssr(mut self, gateway: impl Gateway) -> Self {
         self.gateway = Some(Arc::new(gateway));
         self

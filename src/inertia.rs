@@ -55,8 +55,8 @@ pub(crate) struct Pending {
 }
 
 impl Inertia {
-    /// Create a handle for a request that has no session. Flash data,
-    /// validation errors and history flags need one.
+    /// Create a handle without a session. Queued data can reach this request's
+    /// page, but can't carry over to later requests.
     pub fn new(config: impl Into<Arc<Config>>, request: Request) -> Self {
         Self::build(config.into(), request, None)
     }
@@ -219,6 +219,11 @@ impl Inertia {
     /// Take everything queued for the next page.
     pub(crate) fn take_pending(&self) -> Pending {
         std::mem::take(&mut *self.pending())
+    }
+
+    /// Take flash data queued while resolving props.
+    pub(crate) fn take_flash(&self) -> Map<String, Value> {
+        std::mem::take(&mut self.pending().flash)
     }
 
     fn pending(&self) -> MutexGuard<'_, Pending> {

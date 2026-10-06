@@ -1,9 +1,5 @@
-//! Files checked on every render, such as Vite's hot file and the SSR bundle.
-//!
-//! While watched, they're checked every time, so starting the dev server or
-//! building the bundle takes effect at once. Otherwise the first answer is
-//! kept for the life of the process: in production they only change with a
-//! deploy, so checking them again is a filesystem call per render for nothing.
+//! Watched files are read on each render; otherwise their first result is
+//! cached for the process lifetime.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

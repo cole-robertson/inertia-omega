@@ -47,10 +47,14 @@ validator = { version = "0.21", optional = true }
 axum = { version = "0.8", features = ["macros"] }
 garde = { version = "0.23", features = ["derive", "email"] }
 http-body-util = "0.1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
 tower-sessions = { version = "0.15", features = ["memory-store"] }
 validator = { version = "0.21", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[example]]
+name = "quick_start"
+required-features = ["axum", "tower-sessions"]

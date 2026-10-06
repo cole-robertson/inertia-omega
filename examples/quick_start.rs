@@ -31,7 +31,7 @@ async fn main() {
         .route("/", get(home))
         .layer(InertiaLayer::new(config))
         // The session layer goes outside of the Inertia layer.
-        .layer(SessionManagerLayer::new(MemoryStore::default()));
+        .layer(SessionManagerLayer::new(MemoryStore::default()).with_secure(false));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();

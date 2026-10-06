@@ -1,6 +1,7 @@
 //! The framework-agnostic core, exercised without a web framework.
 
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use http::{HeaderMap, HeaderName, Method};
 use inertia::session::ArraySession;
@@ -324,22 +325,25 @@ fn paginator_normalizes_a_zero_page() {
 
 #[tokio::test]
 async fn sibling_callbacks_resolve_concurrently() {
-    let slow = |value: u8| {
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let wait = |value: u8| {
+        let barrier = Arc::clone(&barrier);
         inertia::lazy(move || async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            barrier.wait().await;
             value
         })
     };
 
-    let started = Instant::now();
-    let page = resolve(visit(&[]).render("Users", props! { "a" => slow(1), "b" => slow(2), "c" => slow(3) })).await;
+    let page = tokio::time::timeout(
+        Duration::from_secs(5),
+        resolve(visit(&[]).render("Users", props! { "a" => wait(1), "b" => wait(2), "c" => wait(3) })),
+    )
+    .await
+    .expect("all sibling callbacks must run before any waits for the others");
 
+    assert_eq!(page.props["a"], 1);
+    assert_eq!(page.props["b"], 2);
     assert_eq!(page.props["c"], 3);
-    assert!(
-        started.elapsed() < Duration::from_millis(350),
-        "took {:?}",
-        started.elapsed()
-    );
 }
 
 #[tokio::test]
@@ -401,6 +405,37 @@ async fn flash_data_reaches_a_render_in_the_same_request() {
         json!({ "toast": "Hi", "other": 1 })
     );
     assert!(page.encrypt_history);
+}
+
+#[tokio::test]
+async fn flash_data_from_prop_callbacks_reaches_the_current_page() {
+    let session = ArraySession::new();
+    let inertia = Inertia::with_session(config(), request(Method::GET, &[]), session.clone());
+    inertia.flash("before", "Queued before rendering");
+    let callback = inertia.clone();
+
+    let page = resolve(
+        inertia
+            .render(
+                "Users",
+                props! {
+                    "user" => inertia::lazy(move || async move {
+                        callback.flash("toast", "Profile refreshed").flash("priority", "Callback");
+                        "Taylor"
+                    }),
+                },
+            )
+            .flash("priority", "Response"),
+    )
+    .await;
+
+    assert_eq!(page.flash["toast"], "Profile refreshed");
+    assert_eq!(page.flash["before"], "Queued before rendering");
+    assert_eq!(page.flash["priority"], "Response");
+
+    inertia.commit().await;
+    let next = Inertia::with_session(config(), request(Method::GET, &[]), session);
+    assert!(resolve(next.render("Users", ())).await.flash.is_empty());
 }
 
 #[tokio::test]

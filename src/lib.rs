@@ -7,9 +7,11 @@
 //! The core is framework-agnostic, built on the `http` crate. It resolves
 //! props, builds the page object, renders the root view, talks to the SSR
 //! server and implements the protocol's redirect and versioning rules.
-//! Adapters connect it to a web framework: [`axum`] ships with the crate.
+//! Adapters connect it to a web framework; the `axum` feature supplies an Axum adapter.
 //!
 //! ```no_run
+//! # #[cfg(feature = "axum")]
+//! # {
 //! use axum::{Router, routing::get};
 //! use inertia::{Config, Inertia, axum::InertiaLayer, props};
 //!
@@ -23,13 +25,14 @@
 //! let app: Router = Router::new()
 //!     .route("/", get(dashboard))
 //!     .layer(InertiaLayer::new(Config::new().version("1")));
+//! # }
 //! ```
 //!
 //! ## Features
 //!
-//! - `axum` (default): the [Axum adapter](axum).
+//! - `axum` (default): the Axum adapter.
 //! - `tower-sessions` (default): a [`Session`] for `tower_sessions::Session`.
-//! - `ssr` (default): [`HttpGateway`](ssr::HttpGateway), for server-side rendering.
+//! - `ssr` (default): `ssr::HttpGateway`, for server-side rendering over HTTP.
 //! - `validator`, `garde`: convert their errors into [`ValidationErrors`].
 
 #![warn(missing_docs)]

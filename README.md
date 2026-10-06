@@ -225,6 +225,8 @@ async fn store(inertia: Inertia, Json(form): Json<NewUser>) -> HttpResponse {
 
 Like Laravel's session, `flash`, `with_errors`, `clear_history` and `preserve_fragment` are queued during the request, written to the session when it ends, and delivered to the next page render. That can be a render in the same request.
 
+Flash data queued by prop callbacks also reaches the page being rendered. Values set with `inertia::Response::flash` take precedence over the request's flash data.
+
 ## Redirects
 
 | Call | Response |
@@ -333,7 +335,7 @@ src/
 └── axum/           The Axum adapter: InertiaLayer, the extractor, IntoResponse
 ```
 
-Everything outside of `axum/` depends only on `http`, `serde` and a few small utility crates. An adapter for another framework is a thin translation layer:
+The core depends on `http`, `serde` and utility crates. Optional features add HTTP SSR, session stores and framework or validation integrations. An adapter for another framework is a thin translation layer:
 
 ```rust
 // 1. Parse the request.
