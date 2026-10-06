@@ -37,6 +37,8 @@ This crate implements the server side of the [Inertia v3 protocol](https://inert
 inertia-omega = { path = "../inertia-omega" }
 ```
 
+The crate's library name is `inertia`, so Rust imports use `inertia::…`. The sibling path above assumes the current [workspace layout](https://github.com/laravel/omega-workspace#setup).
+
 The default features include the Axum adapter, `tower-sessions` support and server-side rendering. For the framework-agnostic core alone, use `default-features = false`.
 
 On the client, follow the Inertia [client-side setup](https://inertiajs.com/docs/v3/installation/client-side-setup) for React, Vue or Svelte. The [demo app](../axum-inertia-app) is a complete example with React, TypeScript, Tailwind, Vite and SSR.
@@ -76,12 +78,14 @@ async fn main() {
         .route("/", get(home))
         .layer(InertiaLayer::new(config))
         // The session layer goes outside of the Inertia layer.
-        .layer(SessionManagerLayer::new(MemoryStore::default()));
+        .layer(SessionManagerLayer::new(MemoryStore::default()).with_secure(false));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 ```
+
+This example assumes your frontend bundle is served at `/build/app.js`. It shows the server wiring; see the [demo app](../axum-inertia-app) for asset serving and frontend setup. `.with_secure(false)` allows session cookies on local HTTP; use secure cookies in HTTPS deployments.
 
 The [`Inertia`](src/inertia.rs) extractor is the handle for the current request. `render` returns an [`inertia::Response`](src/response.rs) right away, so handlers don't `.await` it. Once the handler returns, the layer resolves the props and responds with an HTML document on a first visit, or the page as JSON on an Inertia visit, much like a Laravel `Responsable`.
 
@@ -153,7 +157,7 @@ props! {
 }
 ```
 
-Callbacks are `FnOnce` async closures, so they can move in owned data such as a database pool. **Sibling callbacks run concurrently**, so two deferred props that each take a second load in a second, not two.
+Callbacks are closures returning futures (`FnOnce`), so they can move in owned data such as a database pool. **Sibling callbacks run concurrently**, so independent lookups can overlap rather than run one after another.
 
 For infinite scroll, `Paginator` paginates a collection and describes its pages; implement `ProvidesScrollMetadata` for your own paginated types:
 
@@ -177,6 +181,8 @@ Config::new().share(|_request| props! {
 For data that depends on the request, such as the signed-in user, share it from a middleware. The `Inertia` handle is shared by everything that handles the request:
 
 ```rust
+use axum::extract::Request;
+
 async fn share_user(inertia: Inertia, user: CurrentUser, request: Request, next: Next) -> Response {
     inertia.share("auth.user", user);
     next.run(request).await
@@ -192,7 +198,7 @@ Validation errors are shared automatically as `errors`. Shared prop keys are lis
 
 ## Forms, validation and flash data
 
-The Inertia client posts JSON. Validate it, and on failure redirect back with the errors. They're shared with the next page in its `errors` prop:
+The Inertia client sends form data as JSON, or multipart data for uploads. Validate it, and on failure redirect back with the errors. They're shared with the next page in its `errors` prop:
 
 ```rust
 async fn store(inertia: Inertia, Json(form): Json<NewUser>) -> HttpResponse {
@@ -252,7 +258,7 @@ The root view renders the HTML document of a first visit. It is any `Fn(&View) -
 
 The [`laravel-omega-vite`](../laravel-omega-vite) crate's `Vite` renders asset tags like Laravel's `@vite`. It's a separate dependency, `laravel-omega-vite = { path = "../laravel-omega-vite" }`, used as `vite::Vite`:
 
-- **In development** the Vite dev server writes its URL to a hot file (`public/hot`), and tags point at the dev server, including React Fast Refresh.
+- **In development** the Vite dev server writes its URL to a hot file (`public/hot`), and tags point at the dev server, with `Vite::react_refresh()` providing React Fast Refresh's preamble.
 - **In production** tags come from the build manifest, and its hash makes a good asset version.
 
 The manifest is parsed once and cached. Each render checks for the hot file and the manifest's modified time, so starting the dev server or a new build is picked up without a restart. In production, where neither changes without a deploy, `Vite::new().watch(false)` checks each once instead, and so does `HttpGateway::watch(false)` for its hot file and bundle.
@@ -289,7 +295,7 @@ Config::new().ssr(
 )
 ```
 
-On first visits the page is rendered by the SSR server, and the client hydrates it. If the server is down or rendering fails, the page is rendered on the client instead, so SSR can't take your site down. Implement `ssr::Gateway` to render pages another way.
+On first visits the page is rendered by the SSR server, and the client hydrates it. If the server is down or rendering fails, the page is rendered on the client instead. A slow SSR server can still delay the response until its timeout. Implement `ssr::Gateway` to render pages another way.
 
 ## Testing
 
