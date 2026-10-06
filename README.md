@@ -105,6 +105,7 @@ async fn show(inertia: Inertia) -> inertia::Response {
         .render("Users/Show", ShowProps { user, can_edit: true })
         .with("title", "Profile")         // add a prop
         .with_view_data("meta", "...")    // data for the root view only
+        .with_header("cache-control", "no-store")  // sent with the page, as JSON or HTML
 }
 ```
 

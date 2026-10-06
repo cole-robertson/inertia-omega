@@ -39,6 +39,10 @@ fn app(config: Config) -> Router {
             "/missing",
             get(|inertia: Inertia| async move { (StatusCode::NOT_FOUND, inertia.render("Error", ())) }),
         )
+        .route(
+            "/headed",
+            get(|inertia: Inertia| async move { inertia.render("Home", ()).with_header("x-page", "home") }),
+        )
         .route("/update", put(|| async { inertia::redirect("/") }))
         .route("/fragment", post(|| async { inertia::redirect("/page#section") }))
         .route("/empty", put(|| async { StatusCode::OK }))
@@ -135,6 +139,16 @@ async fn inertia_visits_return_json() {
     assert_eq!(response.header("x-inertia"), Some("true"));
     assert_eq!(response.header("content-type"), Some("application/json"));
     response.page().component("Home").url("/").version("1");
+}
+
+#[tokio::test]
+async fn pages_keep_their_headers_through_the_layer() {
+    let app = app(config());
+
+    assert_eq!(send(&app, get_("/headed")).await.header("x-page"), Some("home"));
+    let visit = send(&app, visit("GET", "/headed").body(Body::empty()).unwrap()).await;
+    assert_eq!(visit.header("x-page"), Some("home"));
+    assert_eq!(visit.header("x-inertia"), Some("true"));
 }
 
 #[tokio::test]

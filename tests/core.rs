@@ -547,3 +547,26 @@ fn converts_garde_reports() {
     assert!(errors.has("phones.1.number"));
     assert!(!errors.has("phones[1].number"));
 }
+
+#[tokio::test]
+async fn pages_carry_their_headers_as_json_and_as_documents() {
+    let json = visit(&[])
+        .render("Users", props! {})
+        .with_header("x-page", "users")
+        .with_header("x-page", "list")
+        .try_into_http()
+        .await
+        .unwrap();
+    assert_eq!(json.headers()["x-page"], "list");
+    assert_eq!(json.headers().get_all("x-page").iter().count(), 1);
+
+    let document = Inertia::new(config(), request(Method::GET, &[]))
+        .render("Users", props! {})
+        .with_headers([("x-page", "users"), ("cache-control", "no-store")])
+        .encrypt_history(true)
+        .try_into_http()
+        .await
+        .unwrap();
+    assert_eq!(document.headers()["x-page"], "users");
+    assert_eq!(document.headers()["cache-control"], "no-store");
+}

@@ -1,6 +1,8 @@
 //! A page render, resolved into an HTTP response once the handler returns.
 
-use http::{HeaderValue, StatusCode, header};
+use std::fmt;
+
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -41,6 +43,7 @@ pub struct Response {
     clear_history: bool,
     preserve_big_integers: Option<bool>,
     ssr: bool,
+    headers: HeaderMap,
 }
 
 impl Response {
@@ -55,6 +58,7 @@ impl Response {
             clear_history: false,
             preserve_big_integers: None,
             ssr: true,
+            headers: HeaderMap::new(),
         }
     }
 
@@ -77,6 +81,46 @@ impl Response {
     pub fn flash(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
         self.flash
             .insert(key.into(), serde_json::to_value(value).unwrap_or_default());
+        self
+    }
+
+    /// Send a header with the page, whether it's sent as JSON or as a whole
+    /// document. It replaces any of the same name.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the name or value isn't a valid header.
+    #[track_caller]
+    pub fn with_header<K, V>(mut self, name: K, value: V) -> Self
+    where
+        K: TryInto<HeaderName>,
+        K::Error: fmt::Debug,
+        V: TryInto<HeaderValue>,
+        V::Error: fmt::Debug,
+    {
+        let name = name.try_into().expect("a valid header name");
+        let value = value.try_into().expect("a valid header value");
+
+        self.headers.insert(name, value);
+        self
+    }
+
+    /// Send several headers with the page.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a name or value isn't a valid header.
+    #[track_caller]
+    pub fn with_headers<K, V>(mut self, headers: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: TryInto<HeaderName>,
+        K::Error: fmt::Debug,
+        V: TryInto<HeaderValue>,
+        V::Error: fmt::Debug,
+    {
+        for (name, value) in headers {
+            self = self.with_header(name, value);
+        }
         self
     }
 
@@ -125,14 +169,20 @@ impl Response {
     pub async fn try_into_http(mut self) -> Result<HttpResponse, PropError> {
         let inertia = self.inertia.clone();
         let view_data = std::mem::take(&mut self.view_data);
+        let headers = std::mem::take(&mut self.headers);
         let ssr = self.ssr;
         let page = self.into_page().await?;
 
-        Ok(if inertia.request().is_inertia() {
+        let mut response = if inertia.request().is_inertia() {
             json(&page)
         } else {
             document(&inertia, &page, &view_data, ssr).await
-        })
+        };
+        for (name, value) in &headers {
+            response.headers_mut().insert(name, value.clone());
+        }
+
+        Ok(response)
     }
 
     /// Resolve the props into the page object.
