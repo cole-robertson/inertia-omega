@@ -89,6 +89,8 @@ This example assumes your frontend bundle is served at `/build/app.js`. It shows
 
 The [`Inertia`](src/inertia.rs) extractor is the handle for the current request. `render` returns an [`inertia::Response`](src/response.rs) right away, so handlers don't `.await` it. Once the handler returns, the layer resolves the props and responds with an HTML document on a first visit, or the page as JSON on an Inertia visit, much like a Laravel `Responsable`.
 
+Until then the response has no body, so middleware between the layer and the handler, such as tower-http's `CompressionLayer` or an ETag layer, sees an empty response. Install such middleware outside of the Inertia layer. If a framework applies its own middleware inside of yours, resolve the page in the handler instead, with `inertia::Response::try_into_http`.
+
 ## Responses
 
 `render` takes a component name and its props: either [`Props`](src/props/mod.rs), usually built with the `props!` macro, or any `Serialize` struct.
