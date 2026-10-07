@@ -281,6 +281,46 @@ async fn flash_data_and_errors_survive_a_redirect() {
     assert!(response.page().page().flash.is_empty());
 }
 
+/// Laravel only writes the session back when it changed, so a page that
+/// finds nothing to deliver leaves the session alone. Saving it anyway
+/// would overwrite changes a concurrent request made to it.
+#[cfg(feature = "tower-sessions")]
+#[tokio::test]
+async fn renders_with_nothing_to_deliver_leave_the_session_unchanged() {
+    let app = app(config());
+
+    let response = send(
+        &app,
+        visit("POST", "/form")
+            .header("referer", "/form")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let cookie = response.session_cookie();
+
+    let delivered = send(
+        &app,
+        visit("GET", "/form")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    delivered.page().flash("message", "Saved!");
+
+    let response = send(
+        &app,
+        visit("GET", "/form")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(response.header("set-cookie"), None);
+}
+
 #[cfg(feature = "tower-sessions")]
 #[tokio::test]
 async fn errors_are_scoped_to_the_requested_error_bag() {
