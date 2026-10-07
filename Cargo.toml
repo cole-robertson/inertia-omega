@@ -41,7 +41,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 tower-sessions = { version = "0.15", default-features = false, optional = true }
-validator = { version = "0.21", optional = true }
+validator = { version = ">=0.20, <0.22", optional = true }
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
@@ -50,7 +50,7 @@ http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
 tower-sessions = { version = "0.15", features = ["memory-store"] }
-validator = { version = "0.21", features = ["derive"] }
+validator = { version = ">=0.20, <0.22", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true
