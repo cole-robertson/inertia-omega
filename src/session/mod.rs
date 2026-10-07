@@ -40,6 +40,9 @@ pub trait Session: Send + Sync + 'static {
     fn put(&self, key: &str, value: Value) -> impl Future<Output = ()> + Send;
 
     /// Get a value and remove it from the session.
+    ///
+    /// Every page render pulls Inertia's keys, so a session that tracks
+    /// changes should stay unmodified when the key is missing.
     fn pull(&self, key: &str) -> impl Future<Output = Option<Value>> + Send;
 }
 
