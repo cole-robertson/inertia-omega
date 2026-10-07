@@ -8,7 +8,6 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-#[cfg(feature = "tower-sessions")]
 use http::header;
 use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
@@ -46,6 +45,16 @@ fn app(config: Config) -> Router {
         .route("/update", put(|| async { inertia::redirect("/") }))
         .route("/fragment", post(|| async { inertia::redirect("/page#section") }))
         .route("/empty", put(|| async { StatusCode::OK }))
+        .route(
+            "/sign-in",
+            post(|| async {
+                (
+                    [(header::SET_COOKIE, "token=abc")],
+                    inertia::redirect("/dashboard#welcome"),
+                )
+            }),
+        )
+        .route("/remember", put(|| async { [(header::SET_COOKIE, "token=abc")] }))
         .route(
             "/away",
             get(|inertia: Inertia| async move { inertia.location("https://inertiajs.com") }),
@@ -229,6 +238,29 @@ async fn redirects_follow_the_protocol() {
     let response = send(&app, visit("GET", "/away").body(Body::empty()).unwrap()).await;
     assert_eq!(response.status, StatusCode::CONFLICT);
     assert_eq!(response.header("x-inertia-location"), Some("https://inertiajs.com"));
+}
+
+/// Axum handlers set cookies on the response itself, as `axum_extra`'s
+/// `CookieJar` does, so a response the layer replaces keeps them.
+#[tokio::test]
+async fn replaced_responses_keep_their_cookies() {
+    let app = app(config());
+
+    let response = send(&app, visit("POST", "/sign-in").body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status, StatusCode::CONFLICT);
+    assert_eq!(response.header("x-inertia-redirect"), Some("/dashboard#welcome"));
+    assert_eq!(response.header("set-cookie"), Some("token=abc"));
+
+    let response = send(
+        &app,
+        visit("PUT", "/remember")
+            .header("referer", "/form")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::SEE_OTHER);
+    assert_eq!(response.header("set-cookie"), Some("token=abc"));
 }
 
 #[tokio::test]

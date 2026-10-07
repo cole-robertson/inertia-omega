@@ -43,7 +43,8 @@ pub fn before(request: &Request, config: &Config) -> Option<HttpResponse> {
 /// - turns a redirect to a URL with a fragment into a `409 Conflict` with
 ///   `X-Inertia-Redirect`, since `fetch` drops fragments when following.
 ///
-/// Returns the response that replaces the handler's, if any.
+/// Returns the response that replaces the handler's, if any. It keeps the
+/// cookies the handler's response set.
 pub fn after(request: &Request, response: &mut response::Parts, body_is_empty: bool) -> Option<HttpResponse> {
     vary(&mut response.headers);
 
@@ -54,7 +55,7 @@ pub fn after(request: &Request, response: &mut response::Parts, body_is_empty: b
     if response.status == StatusCode::OK && body_is_empty {
         let mut back = redirect(request.referer().unwrap_or("/"));
         see_other_after_mutation(request, back.status_mut());
-        return Some(back);
+        return Some(with_cookies(back, &response.headers));
     }
 
     see_other_after_mutation(request, &mut response.status);
@@ -66,7 +67,8 @@ pub fn after(request: &Request, response: &mut response::Parts, body_is_empty: b
             .filter(|location| location.as_bytes().contains(&b'#'));
 
         if let Some(location) = location {
-            return Some(with_header(StatusCode::CONFLICT, inertia::REDIRECT, location.clone()));
+            let conflict = with_header(StatusCode::CONFLICT, inertia::REDIRECT, location.clone());
+            return Some(with_cookies(conflict, &response.headers));
         }
     }
 
@@ -129,6 +131,16 @@ fn with_header(status: StatusCode, name: http::HeaderName, value: HeaderValue) -
     *response.status_mut() = status;
     response.headers_mut().insert(name, value);
     vary(response.headers_mut());
+    response
+}
+
+/// Copy the cookies a response set onto the response replacing it. Laravel
+/// queues cookies and adds them outside of the Inertia middleware, so they
+/// survive the replacement; here they're on the response itself.
+fn with_cookies(mut response: HttpResponse, headers: &HeaderMap) -> HttpResponse {
+    for cookie in headers.get_all(header::SET_COOKIE) {
+        response.headers_mut().append(header::SET_COOKIE, cookie.clone());
+    }
     response
 }
 
