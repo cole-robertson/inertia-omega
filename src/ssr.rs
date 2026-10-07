@@ -208,10 +208,12 @@ impl Gateway for HttpGateway {
             }
         };
 
+        // The SSR server's error describes the page it failed to render,
+        // and the page may hold secrets, such as a token in its URL, so
+        // only the status is logged.
         if !response.status().is_success() {
             let status = response.status();
-            let error = response.text().await.unwrap_or_default();
-            tracing::error!(%url, %status, %error, "Inertia SSR failed; rendering on the client");
+            tracing::error!(%url, %status, "Inertia SSR failed; rendering on the client");
             return None;
         }
 
